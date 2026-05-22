@@ -10,7 +10,6 @@ app.get('/', (req, res) => {
     if (!req.body) {
         return res.status(400).send('No body provided');
     }
-    console.log('Name received:', req.body.name);
     res.send('Hello from Express Server!')
 });
 
