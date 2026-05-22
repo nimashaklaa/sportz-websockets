@@ -11,16 +11,14 @@ const MAX_LIMIT = 100;
 
 matchRouter.get('/', async(req, res) => {
     const parsed = listMatchesQuerySchema.safeParse(req.query);
-    console.log("parsed",parsed);
 
     if(!parsed.success) return res.status(400).json({
         error:'Invalid payload',
-        details:JSON.stringify(parsed.error)
+        details:parsed.error.issues
     })
     const limit = Math.min(parsed.data.limit ?? 50, MAX_LIMIT);
     try{
         const result = await db.select().from(matches).orderBy(desc(matches.createdAt)).limit(limit);
-        console.log("matches", result);
 
         return res.status(200).json({data: result});
 
@@ -35,7 +33,7 @@ matchRouter.post('/', async (req, res) => {
 
     if(!parsed.success) return res.status(400).json({
         error:'Invalid payload',
-        details:JSON.stringify(parsed.error)
+        details:parsed.error.issues
     })
 
     const { startTime, endTime, homeScore, awayScore } = parsed.data;

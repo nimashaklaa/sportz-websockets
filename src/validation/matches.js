@@ -24,8 +24,8 @@ export const createMatchSchema = z.object({
   sport: z.string().min(1),
   homeTeam: z.string().min(1),
   awayTeam: z.string().min(1),
-  startTime: isoDateString,
-  endTime: isoDateString.optional(),
+  startTime: z.iso.datetime(),
+  endTime: z.iso.datetime(),
   homeScore: z.number().int().nonnegative().optional(),
   awayScore: z.number().int().nonnegative().optional(),
 }).superRefine((data, ctx) => {
