@@ -4,7 +4,9 @@ export const MATCH_STATUS = {
   SCHEDULED: 'scheduled',
   LIVE: 'live',
   FINISHED: 'finished',
-}
+} as const;
+
+export type MatchStatus = (typeof MATCH_STATUS)[keyof typeof MATCH_STATUS];
 
 const isoDateString = z.string().refine(
   (val) => !isNaN(Date.parse(val)),
@@ -24,20 +26,21 @@ export const createMatchSchema = z.object({
   sport: z.string().min(1),
   homeTeam: z.string().min(1),
   awayTeam: z.string().min(1),
-  startTime: z.iso.datetime(),
-  endTime: z.iso.datetime(),
+  startTime: isoDateString,
+  endTime: isoDateString.optional(),
   homeScore: z.number().int().nonnegative().optional(),
   awayScore: z.number().int().nonnegative().optional(),
 }).superRefine((data, ctx) => {
-    const startTime = new Date(data.startTime);
-    const endTime = data.endTime ? new Date(data.endTime) : null;
-    if (startTime >= endTime) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Start time must be before end time',
-          path: ['endTime'],
-      });
-    }
+  if (!data.endTime) return;
+  const startTime = new Date(data.startTime);
+  const endTime = new Date(data.endTime);
+  if (startTime >= endTime) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Start time must be before end time',
+      path: ['endTime'],
+    });
+  }
 });
 
 export const updateMatchSchema = z.object({
@@ -61,3 +64,6 @@ export const updateScoreSchema = z.object({
   homeScore: z.number().int().nonnegative(),
   awayScore: z.number().int().nonnegative(),
 });
+
+export type CreateMatchInput = z.infer<typeof createMatchSchema>;
+export type UpdateMatchInput = z.infer<typeof updateMatchSchema>;

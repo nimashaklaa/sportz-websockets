@@ -28,4 +28,9 @@ export const commentary = pgTable('commentary', {
   metadata: jsonb('metadata'),
   tags: text('tags').array(),
   createdAt: timestamp('created_at').defaultNow(),
-})
+});
+
+export type Match = typeof matches.$inferSelect;
+export type NewMatch = typeof matches.$inferInsert;
+export type Commentary = typeof commentary.$inferSelect;
+export type NewCommentary = typeof commentary.$inferInsert;
