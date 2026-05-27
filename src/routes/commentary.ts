@@ -8,49 +8,18 @@ import {
 } from '../validation/commentary';
 import { db } from '../db/db';
 import { commentary, matches } from '../db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 
-export const commentaryRouter = Router();
+export const commentaryRouter = Router({ mergeParams: true });
 
 const MAX_LIMIT = 100;
 
-// GET /commentary?limit=&eventType=&period=&team=
+// GET /matches/:matchId/commentary
 commentaryRouter.get('/', async (req: Request, res: Response) => {
-  const parsed = listCommentaryQuerySchema.safeParse(req.query);
+  const paramParsed = commentaryMatchParamSchema.safeParse(req.params);
 
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'Invalid query', details: parsed.error.issues });
-  }
-
-  const { limit: rawLimit, eventType, period, team } = parsed.data;
-  const limit = Math.min(rawLimit ?? 50, MAX_LIMIT);
-
-  try {
-    const result = await db
-      .select()
-      .from(commentary)
-      .where(
-        eventType ? eq(commentary.eventType, eventType) :
-        period    ? eq(commentary.period, period) :
-        team      ? eq(commentary.team, team) :
-        undefined
-      )
-      .orderBy(desc(commentary.createdAt))
-      .limit(limit);
-
-    return res.status(200).json({ data: result });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Failed to fetch commentary' });
-  }
-});
-
-// GET /commentary/match/:matchId
-commentaryRouter.get('/match/:matchId', async (req: Request, res: Response) => {
-  const parsed = commentaryMatchParamSchema.safeParse(req.params);
-
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'Invalid match ID', details: parsed.error.issues });
+  if (!paramParsed.success) {
+    return res.status(400).json({ error: 'Invalid match ID', details: paramParsed.error.issues });
   }
 
   const queryParsed = listCommentaryQuerySchema.safeParse(req.query);
@@ -59,8 +28,9 @@ commentaryRouter.get('/match/:matchId', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Invalid query', details: queryParsed.error.issues });
   }
 
-  const { matchId } = parsed.data;
-  const limit = Math.min(queryParsed.data.limit ?? 50, MAX_LIMIT);
+  const { matchId } = paramParsed.data;
+  const { limit: rawLimit, eventType, period, team } = queryParsed.data;
+  const limit = Math.min(rawLimit ?? 50, MAX_LIMIT);
 
   try {
     const matchExists = await db.select({ id: matches.id }).from(matches).where(eq(matches.id, matchId)).limit(1);
@@ -69,10 +39,17 @@ commentaryRouter.get('/match/:matchId', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Match not found' });
     }
 
+    const filters = [
+      eq(commentary.matchId, matchId),
+      ...(eventType ? [eq(commentary.eventType, eventType)] : []),
+      ...(period    ? [eq(commentary.period, period)]     : []),
+      ...(team      ? [eq(commentary.team, team)]         : []),
+    ];
+
     const result = await db
       .select()
       .from(commentary)
-      .where(eq(commentary.matchId, matchId))
+      .where(and(...filters))
       .orderBy(desc(commentary.createdAt))
       .limit(limit);
 
@@ -83,16 +60,20 @@ commentaryRouter.get('/match/:matchId', async (req: Request, res: Response) => {
   }
 });
 
-// GET /commentary/:id
+// GET /matches/:matchId/commentary/:id
 commentaryRouter.get('/:id', async (req: Request, res: Response) => {
-  const parsed = commentaryIdParamSchema.safeParse(req.params);
+  const paramParsed = commentaryMatchParamSchema.safeParse(req.params);
+  const idParsed = commentaryIdParamSchema.safeParse(req.params);
 
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'Invalid ID', details: parsed.error.issues });
+  if (!paramParsed.success || !idParsed.success) {
+    return res.status(400).json({ error: 'Invalid params' });
   }
 
   try {
-    const [entry] = await db.select().from(commentary).where(eq(commentary.id, parsed.data.id));
+    const [entry] = await db
+      .select()
+      .from(commentary)
+      .where(and(eq(commentary.id, idParsed.data.id), eq(commentary.matchId, paramParsed.data.matchId)));
 
     if (!entry) {
       return res.status(404).json({ error: 'Commentary not found' });
@@ -105,22 +86,30 @@ commentaryRouter.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// POST /commentary
+// POST /matches/:matchId/commentary
 commentaryRouter.post('/', async (req: Request, res: Response) => {
-  const parsed = createCommentarySchema.safeParse(req.body);
+  const paramParsed = commentaryMatchParamSchema.safeParse(req.params);
 
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'Invalid payload', details: parsed.error.issues });
+  if (!paramParsed.success) {
+    return res.status(400).json({ error: 'Invalid match ID', details: paramParsed.error.issues });
   }
 
+  const bodyParsed = createCommentarySchema.omit({ matchId: true }).safeParse(req.body);
+
+  if (!bodyParsed.success) {
+    return res.status(400).json({ error: 'Invalid payload', details: bodyParsed.error.issues });
+  }
+
+  const { matchId } = paramParsed.data;
+
   try {
-    const matchExists = await db.select({ id: matches.id }).from(matches).where(eq(matches.id, parsed.data.matchId)).limit(1);
+    const matchExists = await db.select({ id: matches.id }).from(matches).where(eq(matches.id, matchId)).limit(1);
 
     if (matchExists.length === 0) {
       return res.status(404).json({ error: 'Match not found' });
     }
 
-    const [entry] = await db.insert(commentary).values(parsed.data).returning();
+    const [entry] = await db.insert(commentary).values({ ...bodyParsed.data, matchId }).returning();
 
     if (res.app.locals.broadcastCommentary) {
       res.app.locals.broadcastCommentary(entry);
@@ -133,12 +122,13 @@ commentaryRouter.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /commentary/:id
+// PATCH /matches/:matchId/commentary/:id
 commentaryRouter.patch('/:id', async (req: Request, res: Response) => {
-  const paramParsed = commentaryIdParamSchema.safeParse(req.params);
+  const paramParsed = commentaryMatchParamSchema.safeParse(req.params);
+  const idParsed = commentaryIdParamSchema.safeParse(req.params);
 
-  if (!paramParsed.success) {
-    return res.status(400).json({ error: 'Invalid ID', details: paramParsed.error.issues });
+  if (!paramParsed.success || !idParsed.success) {
+    return res.status(400).json({ error: 'Invalid params' });
   }
 
   const bodyParsed = updateCommentarySchema.safeParse(req.body);
@@ -151,7 +141,7 @@ commentaryRouter.patch('/:id', async (req: Request, res: Response) => {
     const [entry] = await db
       .update(commentary)
       .set(bodyParsed.data)
-      .where(eq(commentary.id, paramParsed.data.id))
+      .where(and(eq(commentary.id, idParsed.data.id), eq(commentary.matchId, paramParsed.data.matchId)))
       .returning();
 
     if (!entry) {
@@ -165,18 +155,19 @@ commentaryRouter.patch('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// DELETE /commentary/:id
+// DELETE /matches/:matchId/commentary/:id
 commentaryRouter.delete('/:id', async (req: Request, res: Response) => {
-  const parsed = commentaryIdParamSchema.safeParse(req.params);
+  const paramParsed = commentaryMatchParamSchema.safeParse(req.params);
+  const idParsed = commentaryIdParamSchema.safeParse(req.params);
 
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'Invalid ID', details: parsed.error.issues });
+  if (!paramParsed.success || !idParsed.success) {
+    return res.status(400).json({ error: 'Invalid params' });
   }
 
   try {
     const [entry] = await db
       .delete(commentary)
-      .where(eq(commentary.id, parsed.data.id))
+      .where(and(eq(commentary.id, idParsed.data.id), eq(commentary.matchId, paramParsed.data.matchId)))
       .returning();
 
     if (!entry) {

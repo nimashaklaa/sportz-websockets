@@ -21,7 +21,7 @@ app.get('/', (_req, res) => {
 app.use(securityMiddleware());
 
 app.use('/matches', matchRouter);
-app.use('/commentary', commentaryRouter);
+app.use('/matches/:matchId/commentary', commentaryRouter);
 
 const {broadcastMatchCreated} = attachWebSocketServer(server);
 app.locals.broadcastMatchCreated = broadcastMatchCreated;
