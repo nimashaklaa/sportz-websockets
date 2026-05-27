@@ -1,4 +1,4 @@
-# Ground-Level Notes — HTTP, WebSocket & Security
+# Ground-Level Notes — HTTP, WebSocket, Security & Architecture
 
 ---
 
@@ -89,7 +89,7 @@ Connection: Upgrade
 Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
 ```
 
-After this the connection is no longer HTTP — it becomes a raw bidirectional stream using the WebSocket framing protocol. This is why you can attach a WebSocket server to the same port as Express — it intercepts the HTTP upgrade event before Express sees it.
+After this the connection is no longer HTTP — it becomes a raw bidirectional stream. This is why WebSocket can share the same port as Express — it intercepts the HTTP upgrade event before Express sees it.
 
 ```ts
 const server = http.createServer(app); // HTTP handled by Express
@@ -108,8 +108,6 @@ Data is sent in **frames**, not plain text. Each frame has:
 
 ### Connection States
 
-A WebSocket has 4 states:
-
 | State | Value | Meaning |
 |---|---|---|
 | CONNECTING | 0 | Handshake in progress |
@@ -117,71 +115,191 @@ A WebSocket has 4 states:
 | CLOSING | 2 | Close handshake in progress |
 | CLOSED | 3 | Connection closed |
 
-Always check `socket.readyState === WebSocket.OPEN` before sending:
-```ts
-if (socket.readyState !== WebSocket.OPEN) return;
-socket.send(data);
-```
+Always check `socket.readyState === WebSocket.OPEN` before sending.
 
 ### Keep-Alive: Why and How
 
 TCP connections can silently die — a client goes offline, a NAT router drops the entry, a firewall times out the idle connection. The server won't know — from its side the socket looks open.
 
-The solution: **ping/pong heartbeat**. The server sends a `ping` frame; the client must respond with `pong`. If no pong comes back within the interval, the connection is dead.
+The solution: **ping/pong heartbeat**. The server sends a `ping` frame every 30 seconds; the client must respond with `pong`. If no pong comes back, the connection is dead and gets terminated.
 
-```
-Server                    Client
-  |------- ping -------→   |
-  |←------ pong ---------  |   (alive)
-
-Server                    Client (gone)
-  |------- ping -------→   |
-  |                        |   (no pong)
-  → terminate()
-```
-
-Implementation:
 ```ts
 socket.isAlive = true;
 socket.on('pong', () => { socket.isAlive = true; });
 
 const interval = setInterval(() => {
   wss.clients.forEach((socket) => {
-    if (!socket.isAlive) return socket.terminate(); // dead — kill it
-    socket.isAlive = false;  // assume dead until pong comes back
+    if (!socket.isAlive) return socket.terminate();
+    socket.isAlive = false;
     socket.ping();
   });
 }, 30000);
-
-wss.on('close', () => clearInterval(interval)); // clean up on server shutdown
 ```
 
-### WebSocket Close Codes
+### Match Subscriptions
 
-When closing a WebSocket connection, you send a status code:
+Clients subscribe to specific matches to receive targeted updates instead of receiving everything.
+
+```
+Client → { "type": "subscribe", "matchId": 3 }
+Server → stores socket in matchSubscriptions Map<matchId, Set<WebSocket>>
+
+New commentary on match 3 → only subscribers of match 3 are notified
+New match created → broadcast to all connected clients
+```
+
+The server maintains:
+```ts
+const matchSubscriptions = new Map<string, Set<WebSocket>>();
+```
+
+On disconnect, `clearSubscriptions()` removes the socket from all match subscription sets it was part of.
+
+### WebSocket Close Codes
 
 | Code | Meaning |
 |---|---|
 | 1000 | Normal closure |
-| 1008 | Policy violation (used for auth/security rejection) |
+| 1008 | Policy violation (auth/security rejection) |
 | 1011 | Internal server error |
-| 1013 | Try again later (used for rate limit) |
+| 1013 | Try again later (rate limit) |
 
+### Broadcasting
+
+Two broadcast patterns are used:
+
+**Broadcast to all** — used for `match_created`:
 ```ts
-socket.close(1013, 'Rate limit exceeded');
+for (const client of wss.clients) {
+  if (client.readyState !== WebSocket.OPEN) continue;
+  client.send(JSON.stringify(payload));
+}
 ```
 
-### Broadcasting to All Clients
+**Broadcast to match subscribers** — used for `commentary_update`:
+```ts
+const subscribers = matchSubscriptions.get(matchId);
+for (const socket of subscribers) {
+  if (socket.readyState !== WebSocket.OPEN) continue;
+  socket.send(message);
+}
+```
 
-The WebSocket server maintains a `clients` Set of all open connections. Iterating it and sending to each is how you broadcast:
+---
+
+## Validation Architecture
+
+### DTOs vs Zod Output Types
+
+Two layers of types exist for each resource:
+
+**DTOs** — raw wire shape as Express receives it (strings for params/query, JSON for body):
+```ts
+type MatchParamsDTO = { matchId: string };       // params are always strings
+type ListCommentaryQueryDTO = { limit?: string }; // query params are always strings
+```
+
+**Zod output types** — after validation and coercion:
+```ts
+type CreateCommentaryInput = z.infer<typeof createCommentarySchema>;
+// { matchId: number, minute?: number, ... }  ← coerced to proper types
+```
+
+Using DTOs as `Request<Params, _, Body, Query>` generics gives TypeScript full type safety without `as unknown` casts.
+
+### Parse Helpers
+
+Zod v4 + TypeScript 6 cannot infer `safeParse` return types from complex schemas (`.refine()`, `.omit()`). The fix is explicit parse helpers with declared return types:
 
 ```ts
-function broadcast(wss: WebSocketServer, payload: unknown): void {
-  for (const client of wss.clients) {
-    if (client.readyState !== WebSocket.OPEN) continue;
-    client.send(JSON.stringify(payload));
-  }
+type ParseResult<T> = { success: true; data: T } | { success: false; error: z.ZodError };
+
+export function parseCreateCommentaryBody(body: unknown): ParseResult<CreateCommentaryDTO> {
+  return createCommentaryBodySchema.safeParse(body);
 }
+```
+
+The function declaration carries the type — callers always get a properly typed result.
+
+### Why `.omit()` Must Be Hoisted
+
+Calling `.omit()` inline inside a function breaks TS6 inference:
+```ts
+// Bad — TS6 can't resolve the inline .omit() type
+function parse(body: unknown) {
+  return createCommentarySchema.omit({ matchId: true }).safeParse(body); // returns any
+}
+
+// Good — hoisted constant, TypeScript resolves it once
+export const createCommentaryBodySchema = createCommentarySchema.omit({ matchId: true });
+```
+
+---
+
+## Commentary
+
+Commentary is a real-time event log for a match. Each entry represents something that happened during the game:
+
+| Field | Purpose |
+|---|---|
+| `minute` | When it happened in the match |
+| `eventType` | Category — `goal`, `yellow_card`, `red_card`, `substitution`, `penalty`, `foul` |
+| `actor` | Player involved |
+| `team` | Which team |
+| `message` | Human-readable description |
+| `period` | Match period — `first_half`, `second_half`, `extra_time` |
+| `tags` | Searchable labels |
+| `metadata` | Flexible JSON for extra context |
+
+Commentary is scoped to a match via the nested route:
+```
+POST /matches/:matchId/commentary
+GET  /matches/:matchId/commentary
+```
+
+`matchId` comes from the URL — it is never in the request body.
+
+---
+
+## Frontend State Management
+
+### Why Zustand
+
+The app needed shared state across components that are not in a direct parent-child relationship (sidebar list ↔ detail panel ↔ WebSocket updates). Options:
+
+- **useState + prop drilling** — works for simple cases, breaks with deeply nested or sibling components
+- **React Context** — good for infrequently changing state, causes full subtree re-renders
+- **Zustand** — minimal boilerplate, selective subscriptions, outside-React access (useful for WS handlers)
+
+### Store Shape
+
+```ts
+{
+  matches: Match[]              // sidebar list
+  matchesLoading: boolean
+  filter: MatchStatus | 'all'  // active filter tab
+
+  selectedMatch: Match | null   // detail panel
+
+  commentary: Record<number, Commentary[]>  // keyed by matchId — cached per match
+  commentaryLoading: boolean
+}
+```
+
+Commentary is stored as a map rather than a single array so switching between matches doesn't lose or re-fetch data.
+
+### WebSocket + Store Integration
+
+The WebSocket hook lives in `MatchDetail`. When a `commentary_update` arrives, it calls `appendCommentary(entry)` on the store. Because the commentary feed reads from `store.commentary[matchId]`, it re-renders automatically.
+
+```
+WS message arrives
+      ↓
+appendCommentary(entry)  ← store action
+      ↓
+store.commentary[matchId] updated
+      ↓
+CommentaryFeed re-renders (Zustand selector)
 ```
 
 ---
@@ -190,82 +308,38 @@ function broadcast(wss: WebSocketServer, payload: unknown): void {
 
 ### What Arcjet Does
 
-Arcjet sits in front of your handlers and evaluates each request against a set of rules before your code runs. If a request is denied, you stop it there — your database and business logic are never touched.
+Arcjet evaluates each request against a set of rules before your code runs. If denied, the request is stopped immediately — your database is never touched.
 
 ```
-Request → Arcjet rules evaluated → allowed → your handler
-                                 → denied  → 429 / 403 returned immediately
+Request → Arcjet rules → allowed → your handler
+                       → denied  → 429 / 403 returned immediately
 ```
 
 ### The Three Rules Used
 
-**Shield** — detects and blocks common attack patterns (SQL injection attempts, XSS payloads, suspicious headers). Operates passively — just add it and it works.
+**Shield** — blocks common attack patterns (SQLi, XSS, suspicious headers).
 
-**detectBot** — identifies automated traffic by analyzing headers, TLS fingerprint, and request patterns. You can allow specific bots (search engine crawlers, link preview fetchers) while blocking everything else.
+**detectBot** — identifies automated traffic by headers, TLS fingerprint, request patterns. Allows specific bots (crawlers, link preview) while blocking the rest.
 
-**slidingWindow** — rate limiting. Tracks how many requests a client (by IP) made in the last N seconds. If they exceed the threshold, requests are rejected with 429.
-
-### Sliding Window vs Fixed Window Rate Limiting
-
-**Fixed window**: count resets at fixed intervals (e.g. every 10s). A client can burst 50 requests at second 9, then another 50 at second 11 — 100 requests in 2 seconds.
-
-**Sliding window**: counts requests in the last N seconds from *now*. The window moves with time — no burst exploit at the boundary.
-
-```
-Fixed:    [0----10s] reset [10s----20s] reset
-Sliding:  always looking back 10s from current moment
-```
+**slidingWindow** — rate limiting. Counts requests per IP in the last N seconds. Sliding window prevents burst exploits at interval boundaries.
 
 ### Two Instances — Different Limits
 
-HTTP and WebSocket connections have different threat models:
-
 ```ts
-// HTTP: general API traffic — more lenient
-slidingWindow({ mode: arcjetMode, interval: '10s', max: 50 })
+// HTTP: general API traffic
+slidingWindow({ interval: '10s', max: 50 })
 
-// WebSocket: handshake only — tighter, because WS connections are persistent
-slidingWindow({ mode: arcjetMode, interval: '2s', max: 5 })
+// WebSocket: connection handshake only — tighter
+slidingWindow({ interval: '2s', max: 5 })
 ```
 
-A WebSocket connection lasts a long time — you only need to allow legitimate clients to connect, not allow high-frequency reconnects.
+WebSocket connections are persistent — you only need to allow legitimate clients to establish the connection, not allow high-frequency reconnects.
 
 ### DRY_RUN Mode
 
-Setting `ARCJET_MODE=DRY_RUN` makes Arcjet evaluate rules and log decisions but never actually block anything. Use this during development to see what would be blocked without disrupting your workflow.
-
 ```
 ARCJET_MODE=DRY_RUN  →  decisions logged, requests always allowed
-ARCJET_MODE=LIVE     →  decisions enforced (default)
+ARCJET_MODE=LIVE     →  decisions enforced
 ```
 
-### Where Arcjet Runs in the Stack
-
-**HTTP** — as Express middleware, before route handlers:
-```ts
-app.use(securityMiddleware()); // runs on every request
-app.use('/matches', matchRouter);
-```
-
-**WebSocket** — inside the connection handler, before the socket is accepted:
-```ts
-wss.on('connection', async (socket, req) => {
-  const decision = await wsArcjet.protect(req);
-  if (decision.isDenied()) {
-    socket.close(1013, 'Rate limit exceeded');
-    return; // socket rejected before any app logic runs
-  }
-  // ... rest of connection setup
-});
-```
-
-### Reading the Decision
-
-```ts
-const decision = await arcjet.protect(req);
-
-decision.isDenied()              // was this request blocked?
-decision.reason.isRateLimit()    // specifically rate limited?
-decision.reason.isBot()          // blocked as a bot?
-decision.reason.isShield()       // blocked by shield?
-```
+Use `DRY_RUN` during development to see what would be blocked without disrupting your workflow.
