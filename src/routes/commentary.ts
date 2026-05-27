@@ -113,7 +113,7 @@ commentaryRouter.post('/', async (req: MutateReq<MatchParamsDTO, CreateCommentar
     const [entry]: Commentary[] = await db.insert(commentary).values({ ...bodyParsed.data, matchId }).returning();
 
     if (res.app.locals.broadcastCommentary) {
-      res.app.locals.broadcastCommentary(entry);
+      res.app.locals.broadcastCommentary(entry.matchId, entry);
     }
 
     return res.status(201).json({ data: entry });
