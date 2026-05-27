@@ -48,72 +48,88 @@ export function MatchDetail({ match, onBack }: Props) {
   const startDate = new Date(liveMatch.startTime);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 mb-6">
+    <div className="flex flex-col gap-4">
+      {/* Back navigation */}
+      <div>
         <button
           onClick={onBack}
-          className="text-slate-400 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-slate-700/50"
+          className="inline-flex items-center gap-1.5 text-sm text-[#64748b] hover:text-[#1d4ed8] transition-colors font-medium"
         >
-          ← Back
+          <span className="text-base leading-none">←</span>
+          All matches
         </button>
       </div>
 
-      <div className="rounded-2xl border border-slate-700/60 bg-slate-800/40 p-6 mb-4">
-        <div className="flex items-center justify-between mb-4">
-          <span className="text-slate-400 text-sm capitalize">{liveMatch.sport}</span>
+      {/* Scoreboard */}
+      <div className="rounded-xl border border-[#e2e8f0] bg-white shadow-sm overflow-hidden">
+        {/* Sport & status row */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-[#f1f5f9] bg-[#f8fafc]">
+          <span className="text-xs font-semibold text-[#64748b] uppercase tracking-wider">{liveMatch.sport}</span>
           <StatusBadge status={liveMatch.status} />
         </div>
 
-        <div className="flex items-center justify-between gap-4">
+        {/* Score block */}
+        <div className="flex items-center justify-between gap-4 px-5 py-6">
           <div className="flex-1 text-right">
-            <p className="text-xl font-bold text-slate-100">{liveMatch.homeTeam}</p>
-            <p className="text-slate-500 text-xs mt-1">Home</p>
+            <p className="text-lg font-bold text-[#0f172a] leading-tight">{liveMatch.homeTeam}</p>
+            <p className="text-xs text-[#94a3b8] mt-1 font-medium uppercase tracking-wide">Home</p>
           </div>
 
           <div className="text-center px-4">
             {liveMatch.status === 'scheduled' ? (
               <div>
-                <p className="text-2xl font-bold text-slate-100">
+                <p className="text-3xl font-bold text-[#0f172a] tabular-nums">
                   {startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </p>
-                <p className="text-slate-400 text-sm mt-1">
+                <p className="text-sm text-[#64748b] mt-1">
                   {startDate.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
                 </p>
               </div>
             ) : (
-              <p className="text-5xl font-bold tabular-nums text-slate-100">
-                {liveMatch.homeScore}
-                <span className="text-slate-600 mx-3 font-light">:</span>
-                {liveMatch.awayScore}
-              </p>
+              <div>
+                <p className="text-5xl font-bold tabular-nums text-[#0f172a]">
+                  {liveMatch.homeScore}
+                  <span className="text-[#cbd5e1] mx-3 font-light">:</span>
+                  {liveMatch.awayScore}
+                </p>
+                {liveMatch.status === 'live' && (
+                  <p className="text-xs text-red-500 font-semibold mt-2 tracking-wide">IN PROGRESS</p>
+                )}
+                {liveMatch.status === 'finished' && (
+                  <p className="text-xs text-[#94a3b8] font-medium mt-2 tracking-wide">FULL TIME</p>
+                )}
+              </div>
             )}
           </div>
 
           <div className="flex-1 text-left">
-            <p className="text-xl font-bold text-slate-100">{liveMatch.awayTeam}</p>
-            <p className="text-slate-500 text-xs mt-1">Away</p>
+            <p className="text-lg font-bold text-[#0f172a] leading-tight">{liveMatch.awayTeam}</p>
+            <p className="text-xs text-[#94a3b8] mt-1 font-medium uppercase tracking-wide">Away</p>
           </div>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-700/60 bg-slate-800/20 p-4 flex-1">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-slate-200 font-semibold text-sm tracking-wide uppercase">Commentary</h2>
+      {/* Commentary section */}
+      <div className="rounded-xl border border-[#e2e8f0] bg-white shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-[#f1f5f9]">
+          <h2 className="text-sm font-semibold text-[#0f172a] tracking-wide">Commentary</h2>
           {liveMatch.status === 'live' && (
-            <span className="flex items-center gap-1.5 text-red-400 text-xs font-medium">
-              <span className="w-1.5 h-1.5 bg-red-400 rounded-full animate-pulse" />
-              Live
+            <span className="flex items-center gap-1.5 text-red-600 text-xs font-semibold">
+              <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+              Live updates
             </span>
           )}
         </div>
 
-        {commentaryLoading && matchCommentary.length === 0 ? (
-          <div className="flex justify-center py-12">
-            <div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : (
-          <CommentaryFeed commentary={matchCommentary} isLive={liveMatch.status === 'live'} />
-        )}
+        <div className="p-4">
+          {commentaryLoading && matchCommentary.length === 0 ? (
+            <div className="flex justify-center py-12">
+              <div className="w-5 h-5 border-2 border-[#1d4ed8] border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : (
+            <CommentaryFeed commentary={matchCommentary} isLive={liveMatch.status === 'live'} />
+          )}
+        </div>
       </div>
     </div>
   );
