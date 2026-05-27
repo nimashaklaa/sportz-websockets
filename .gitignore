@@ -6,6 +6,8 @@ node_modules
 .env
 
 dist
+**/dist
+src/**/*.js
 
 apminsightnode.json
 apminsightdata/
