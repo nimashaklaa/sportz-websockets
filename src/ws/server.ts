@@ -1,7 +1,7 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { Server } from 'http';
-import { Match } from '../db/schema.js';
-import {wsArcjet} from '../arcjet.js';
+import { Match } from '../db/schema';
+import {wsArcjet} from '../arcjet';
 
 function sendJson(socket: WebSocket, payload: unknown): void {
   if (socket.readyState !== WebSocket.OPEN) return;

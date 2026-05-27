@@ -1,5 +1,5 @@
-import { MATCH_STATUS, MatchStatus } from '../validation/matches.js';
-import { Match } from '../db/schema.js';
+import { MATCH_STATUS, MatchStatus } from '../validation/matches.ts';
+import { Match } from '../db/schema.ts';
 
 export function getMatchStatus(startTime: string | Date, endTime?: string | Date | null, now = new Date()): MatchStatus | null {
   const start = new Date(startTime);
