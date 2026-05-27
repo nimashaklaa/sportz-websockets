@@ -3,7 +3,7 @@ import { createMatchSchema, listMatchesQuerySchema, type ListMatchesQueryDTO, ty
 import { db } from '../db/db';
 import { matches, type Match } from '../db/schema';
 import { getMatchStatus } from '../utils/match-status';
-import { desc } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 
 export const matchRouter = Router();
 
@@ -16,10 +16,16 @@ matchRouter.get('/', async (req: Request<Record<string, never>, unknown, unknown
     return res.status(400).json({ error: 'Invalid query', details: parsed.error.issues });
   }
 
-  const limit = Math.min(parsed.data.limit ?? 50, MAX_LIMIT);
+  const { limit: rawLimit, status } = parsed.data;
+  const limit = Math.min(rawLimit ?? 50, MAX_LIMIT);
 
   try {
-    const result: Match[] = await db.select().from(matches).orderBy(desc(matches.createdAt)).limit(limit);
+    const result: Match[] = await db
+      .select()
+      .from(matches)
+      .where(status ? eq(matches.status, status) : undefined)
+      .orderBy(desc(matches.createdAt))
+      .limit(limit);
     return res.status(200).json({ data: result });
   } catch (err) {
     console.error(err);
