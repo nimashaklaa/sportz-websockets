@@ -65,5 +65,13 @@ export const updateScoreSchema = z.object({
   awayScore: z.number().int().nonnegative(),
 });
 
+// Inferred output types (post-validation)
 export type CreateMatchInput = z.infer<typeof createMatchSchema>;
 export type UpdateMatchInput = z.infer<typeof updateMatchSchema>;
+
+// DTOs — raw wire types matching what Express receives before zod coercion
+export type ListMatchesQueryDTO = {
+  limit?: string;
+  status?: string;
+};
+export type CreateMatchDTO = CreateMatchInput;
